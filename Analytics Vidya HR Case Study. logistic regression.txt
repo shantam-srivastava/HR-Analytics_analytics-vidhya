@@ -1,0 +1,416 @@
+
+
+###########################################
+#### ---- HR ANALYTICS CASE STUDY ---- ####
+###########################################
+
+
+# Clear everything previously in environment
+rm(list = ls())
+dev.off()
+
+setwd("E:/Downloads/AV HR Analytics")
+
+# Import datasets
+train <- read.csv("train.csv", stringsAsFactors = F, check.names = F)
+test <- read.csv("test.csv", stringsAsFactors = F, check.names = F)
+
+# Get a feel of the data at hand
+head(train)
+head(test)
+
+# Combine datasets for cleaning
+require(dplyr)
+master <- bind_rows(train, test)
+
+str(master)
+
+# Check target variable 
+prop.table(table(master$is_promoted)) * 100
+
+# Only 8% are promoted
+
+
+#### ---- Data cleaning ---- ####
+
+# Avoid case mismatch possibility
+master <- mutate_if(master, is.character, toupper)
+
+# Check missing values
+colSums(is.na(master))
+
+# NA's in previous year rating
+summary(master$previous_year_rating)
+
+# Check where previous_year_rating is NA
+View( master[which(is.na(master$previous_year_rating)), ])
+
+# We see that where previous_year_rating is NA, length_of_service is "1".
+# So NA's seem justified.
+
+master$previous_year_rating[which(is.na(master$previous_year_rating))] <- "NOT_APPL"
+
+table(master$previous_year_rating)
+
+# Check blanks
+colSums(master == "")
+
+# Blanks in education
+table(master$education)
+
+# Lets keep it simple for now.
+master$education[which(master$education == "")] <- "UNKNOWN"
+table(master$education)
+
+# Check duplicates
+sum(duplicated(master[,-1]))
+
+# 144 duplicate rows.
+
+(144/nrow(master)) * 100
+# Negligible duplicacy. Keeping it as it is.
+
+# Check no. of levels
+sapply(master, function(x) length(unique(x)))
+
+# See structure now.
+str(master)
+
+# Many variables not in proper format.
+
+
+#### ---- EDA ---- ####
+
+require(ggplot2)
+require(gridExtra)
+
+# Creating custom functions for visualization of categorical and continuous variables.
+cat_plot <- function(cat_var){
+  p1 <- ggplot(master[which(!is.na(master$is_promoted)),],
+               aes(x = master[which(!is.na(master$is_promoted)),cat_var], fill = as.factor(is_promoted))) + 
+    geom_bar(col = 'black') + theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(x = cat_var, y = 'is_promoted')
+  p2 <- ggplot(master[which(!is.na(master$is_promoted)),],
+               aes(x = master[which(!is.na(master$is_promoted)),cat_var], fill = as.factor(is_promoted))) + 
+    geom_bar(col = 'black',position = "fill") + theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(x = cat_var, y = 'is_promoted')
+  grid.arrange(p1, p2)}
+
+
+cont_plot <- function(cont_var){
+  p1 <- ggplot(master[which(!is.na(master$is_promoted)),],
+               aes(x = master[which(!is.na(master$is_promoted)),cont_var], fill = as.factor(is_promoted))) + 
+    geom_histogram(col = 'black', bins = 10) + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(x = cont_var, y = 'is_promoted')
+  p2 <- ggplot(master[which(!is.na(master$is_promoted)),],
+               aes(x = master[which(!is.na(master$is_promoted)),cont_var], fill = as.factor(is_promoted))) + 
+    geom_histogram(col = 'black',position = "fill", bins = 10) + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(x = cont_var, y = 'is_promoted')
+  grid.arrange(p1, p2)}
+
+
+# Univariate / Bivariate Analysis ----
+
+colnames(master)
+
+# 1.department
+cat_plot("department")
+
+# There seems departmental bias.
+
+# 2. region
+cat_plot("region")
+
+# Way too many categories in region. Pattern detection not possible.
+
+# 3. education
+cat_plot("education")
+
+# Slightly higher fraction of promotions in Masters and Above category.
+# Education matters !!!
+
+# 4. gender
+cat_plot("gender")
+
+# Lesser female employees overall. But no gender bias in promotions.
+
+# 5. recruitment_channel
+cat_plot("recruitment_channel")
+
+# Clearly, referred employees outperform others.
+
+# 6. no_of_trainings
+cont_plot("no_of_trainings")
+
+# Check outliers
+plot(quantile(master$no_of_trainings, seq(0,1,0.01)))
+quantile(master$no_of_trainings, seq(0,1,0.01))
+
+master$no_of_trainings[master$no_of_trainings > 4] <- 5
+
+# 7. Age
+cont_plot("age")
+
+# Check outliers
+plot(quantile(master$age, seq(0,1,0.01)))
+quantile(master$age, seq(0,1,0.01))
+
+# 8. previous_year_rating
+cat_plot("previous_year_rating")
+
+# 9. length_of_service
+cont_plot("length_of_service")
+
+# Check outliers
+plot(quantile(master$length_of_service, seq(0,1,0.01)))
+quantile(master$length_of_service, seq(0,1,0.01))
+
+master$length_of_service[master$length_of_service > 20] <- 22
+
+# 10. KPIs_met >80%
+cat_plot("KPIs_met >80%")
+
+# Clearly, meeting KPI matters for promotion
+
+# 11. awards_won?
+cat_plot("awards_won?")
+
+# Very few employees won award. And it highly impacts chances of promotion.
+
+# 12. avg_training_score
+cont_plot("avg_training_score")
+
+plot(quantile(master$avg_training_score, seq(0,1,0.01)))
+quantile(master$avg_training_score, seq(0,1,0.01))
+
+
+#### ---- Feature Engineering ---- ####
+
+# Creating some new metrics which may help in prediction.
+
+# total training score of employees
+master$tot_training_score <- master$no_of_trainings * master$avg_training_score
+
+# Age of employee when joined company
+master$start_time_age <- master$age - master$length_of_service
+
+# Join KPI and awards columns
+master$KPI_awards <- paste(master$`KPIs_met >80%`, master$`awards_won?`, sep = "_&_")
+
+# Join education and gender columns
+master$education_gender <- paste(master$education, master$gender, sep = "_&_")
+
+
+# It will be good idea to treat continuous and categorical variables separately.
+colnames(master)
+
+cont_vars <- master[,c("no_of_trainings", "age", "length_of_service",
+            "avg_training_score", "tot_training_score", "start_time_age")]
+
+# Check correlation among continuous variables
+cormat <- cor(cont_vars)
+
+require(corrplot)
+corrplot(cormat, method = 'number')
+# High correlation between many variables.
+
+# Scale continuous variables
+cont_vars <- as.data.frame(sapply(cont_vars, scale))
+
+# Now see categorical variables
+cat_vars <- master[, !colnames(master) %in% colnames(cont_vars)]
+names(cat_vars)
+
+summary(cat_vars)
+# Summary not proper
+
+# Converting to factor (as categorical)
+cat_vars <- as.data.frame(sapply(cat_vars, as.factor))
+
+summary(cat_vars)
+# Proper summary can be seen
+
+sapply(cat_vars, n_distinct)
+# Employee ID is unique for each row,
+
+# Region variable has too many categories.
+cat_vars$region <- NULL
+
+# Joing them to create master dataset again
+master <- cbind(cat_vars[,1], cont_vars, cat_vars[,-1])
+
+colnames(master)[1] <- "employee_id"
+
+str(master)
+# All variables in proper format.
+
+# EDA Complete...
+
+
+#### ---- Model Building ---- ####
+
+train <- master[which(!is.na(master$is_promoted)),]
+test <- master[which(is.na(master$is_promoted)),]
+
+prop.table( table(train$is_promoted)) * 100
+table(train$is_promoted)
+
+# Target variable classes are imbalanced.
+
+require(DMwR)
+set.seed(123)
+train <- SMOTE(is_promoted ~ ., data = train, perc.over = 500, perc.under = 200)
+
+prop.table( table(train$is_promoted)) * 100
+table(train$is_promoted)
+# Well balanced classes now.
+
+# Create training and validation dsataset
+require(caTools)
+
+set.seed(999)
+index = sample.split(train$is_promoted, SplitRatio = 0.75)
+
+tr.data <- train[index, -1]
+val.data <- train[!index, -1]
+
+# Create dummy variables. Necessary for some algorithms
+require(dummies)
+train.dum <- dummy.data.frame(train[,-1])
+test.dum <- dummy.data.frame(test[,-1])
+
+train.dum$is_promoted0 <- NULL
+colnames(train.dum)[colnames(train.dum) == "is_promoted1"] <- "is_promoted"
+
+tr.dum <- train.dum[index, ]
+val.dum <- train.dum[!index, ]
+
+
+rm(cat_vars, cont_vars, cormat, master, index, cat_plot, cont_plot)
+dev.off()
+
+
+#### Logistic Regression ----
+
+model_1 <- glm(is_promoted ~ ., data = tr.dum, family = 'binomial')
+summary(model_1)
+# AIC: 31323
+
+require(MASS)
+# model_2 <- stepAIC(model_1, direction = 'both')
+
+model_2 <- glm(formula = is_promoted ~ no_of_trainings + age + avg_training_score + 
+                 departmentANALYTICS + departmentFINANCE + departmentHR + 
+                 departmentLEGAL + departmentOPERATIONS + departmentPROCUREMENT + 
+                 `departmentR&D` + `departmentSALES & MARKETING` + `educationMASTER'S & ABOVE` + 
+                 genderF + recruitment_channelOTHER + recruitment_channelREFERRED + 
+                 previous_year_rating1 + previous_year_rating2 + previous_year_rating3 + 
+                 previous_year_rating5 + `KPIs_met >80%0` + `awards_won?0` + 
+                 `KPI_awards0_&_0` + `KPI_awards0_&_1` + `KPI_awards1_&_0` + 
+                 `education_genderBELOW SECONDARY_&_F` + `education_genderMASTER'S & ABOVE_&_F` + 
+                 `education_genderUNKNOWN_&_F` + `education_genderBACHELOR'S_&_M` + 
+                 educationUNKNOWN, family = "binomial", data = tr.dum)
+
+summary(model_2)
+# AIC: 31313
+
+require(car)
+sort(vif(model_2), decreasing = T)
+# All high VIFs are highly important.
+# Removing as per p-value.
+
+# educationUNKNOWN
+model_3 <- glm(formula = is_promoted ~ no_of_trainings + age + avg_training_score + 
+                 departmentANALYTICS + departmentFINANCE + departmentHR + 
+                 departmentLEGAL + departmentOPERATIONS + departmentPROCUREMENT + 
+                 `departmentR&D` + `departmentSALES & MARKETING` + `educationMASTER'S & ABOVE` + 
+                 genderF + recruitment_channelOTHER + recruitment_channelREFERRED + 
+                 previous_year_rating1 + previous_year_rating2 + previous_year_rating3 + 
+                 previous_year_rating5 + `KPIs_met >80%0` + `awards_won?0` + 
+                 `KPI_awards0_&_0` + `KPI_awards0_&_1` + `KPI_awards1_&_0` + 
+                 `education_genderBELOW SECONDARY_&_F` + `education_genderMASTER'S & ABOVE_&_F` + 
+                 `education_genderUNKNOWN_&_F` + `education_genderBACHELOR'S_&_M`, family = "binomial", data = tr.dum)
+
+summary(model_3)
+
+# education_genderUNKNOWN_&_F
+model_4 <- glm(formula = is_promoted ~ no_of_trainings + age + avg_training_score + 
+                 departmentANALYTICS + departmentFINANCE + departmentHR + 
+                 departmentLEGAL + departmentOPERATIONS + departmentPROCUREMENT + 
+                 `departmentR&D` + `departmentSALES & MARKETING` + `educationMASTER'S & ABOVE` + 
+                 genderF + recruitment_channelOTHER + recruitment_channelREFERRED + 
+                 previous_year_rating1 + previous_year_rating2 + previous_year_rating3 + 
+                 previous_year_rating5 + `KPIs_met >80%0` + `awards_won?0` + 
+                 `KPI_awards0_&_0` + `KPI_awards0_&_1` + `KPI_awards1_&_0` + 
+                 `education_genderBELOW SECONDARY_&_F` + `education_genderMASTER'S & ABOVE_&_F` + 
+                 `education_genderBACHELOR'S_&_M`, family = "binomial", data = tr.dum)
+
+
+summary(model_4)
+
+sort(vif(model_4), decreasing = T)
+
+
+# recruitment_channelREFERRED
+model_5 <- glm(formula = is_promoted ~ no_of_trainings + age + avg_training_score + 
+                   departmentANALYTICS + departmentFINANCE + departmentHR + 
+                   departmentLEGAL + departmentOPERATIONS + departmentPROCUREMENT + 
+                   `departmentR&D` + `departmentSALES & MARKETING` + `educationMASTER'S & ABOVE` + 
+                   genderF + recruitment_channelOTHER + 
+                   previous_year_rating1 + previous_year_rating2 + previous_year_rating3 + 
+                   previous_year_rating5 + `KPIs_met >80%0` + `awards_won?0` + 
+                   `KPI_awards0_&_0` + `KPI_awards0_&_1` + `KPI_awards1_&_0` + 
+                   `education_genderBELOW SECONDARY_&_F` + `education_genderMASTER'S & ABOVE_&_F` + 
+                   `education_genderBACHELOR'S_&_M`, family = "binomial", data = tr.dum)
+
+summary(model_5)
+
+# Now all are significant. So this is Final logistic model.
+log_model <- model_5
+
+# Lets predict.
+pred_probability <- predict(log_model, newdata = val.dum, type = 'response')
+
+summary(pred_probability)
+
+actual_promoted <- factor(ifelse(val.dum$is_promoted == 1,"1","0"))
+
+# Calculating the optimal probalility cutoff.
+s <- seq(min(pred_probability), max(pred_probability), length=500)
+
+OUT <- matrix(0,500,3)
+colnames(OUT) <- c("Sensitivity", "Specificity", "Accuracy")
+
+require(caret)
+
+# Creating custom function to find cutoff probability at which
+# sensitivity, sepeificity and overall accuracy are all equal.
+
+cutoff_finder <- function(cutoff) {
+                  predicted_promoted <- factor(ifelse(pred_probability > cutoff, "1", "0"))
+                  conf <- confusionMatrix(predicted_promoted, actual_promoted, positive = "1")
+                  out <- c(conf$byClass[1], conf$byClass[2], conf$overall[1]) 
+                  return(out) }
+
+for(i in 1:500) {OUT[i,] <- cutoff_finder(s[i])}
+
+cutoff <- s[which.min(abs(OUT[,1]-OUT[,2]))]
+cutoff
+
+# Thus, predicting final booking as per cutoff value of predicted probability
+predicted_promoted <- factor(ifelse(pred_probability >= cutoff, "1", "0"))
+
+con_mat <- confusionMatrix(predicted_promoted, actual_promoted, positive = "1")
+con_mat
+
+# Logistic regression model achieves 87% accuracy at cutoff probability.
+
+pred_probability <- predict(log_model, newdata = test.dum, type = 'response')
+
+test$is_promoted <- factor(ifelse(pred_probability >= cutoff, "1", "0"))
+
+write.csv(test[,c('employee_id', 'is_promoted')], 'GLM.csv', row.names = F)
+# Score = 0.400
+
